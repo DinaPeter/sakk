@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+Chess[[:space:]]set.fbx filter=lfs diff=lfs merge=lfs -text
+6d53d1dddb358e4dd714065ba5d4e82b filter=lfs diff=lfs merge=lfs -text
+a49f59cae9a09bf3d2d608634632b8ae filter=lfs diff=lfs merge=lfs -text
