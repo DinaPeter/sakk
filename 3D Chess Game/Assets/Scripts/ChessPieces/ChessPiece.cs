@@ -20,6 +20,8 @@ public class ChessPiece : MonoBehaviour
     public int currentY;
     public ChessPieceType type;
 
+    public bool canBeCapturedEnPassant = false;
+
     private Vector3 desiredPosition;
     private Vector3 desiredScale = Vector3.one;
 

@@ -922,6 +922,49 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 272586978}
   m_CullTransparentMesh: 1
+--- !u!1 &307911472
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 307911474}
+  - component: {fileID: 307911473}
+  m_Layer: 0
+  m_Name: Stackfish
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &307911473
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 307911472}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e4eff6978f85ae54bafe2563795e9970, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!4 &307911474
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 307911472}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 960, y: 540, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_RootOrder: 5
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &314632062
 GameObject:
   m_ObjectHideFlags: 0
@@ -4022,6 +4065,7 @@ MonoBehaviour:
   whiteTimeWrite: {fileID: 1818199480}
   blackTimeWrite2: {fileID: 2139842887}
   whiteTimeWrite2: {fileID: 1818199478}
+  stockfish: {fileID: 0}
   prefabs:
   - {fileID: 2343044454859046245, guid: 94bfd3d988e933f47befc1866f02b279, type: 3}
   - {fileID: 863089797620441809, guid: 622bfc9608545e34aa2fd843a2c13954, type: 3}

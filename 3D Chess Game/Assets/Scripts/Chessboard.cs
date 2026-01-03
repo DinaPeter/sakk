@@ -1,5 +1,6 @@
-using System.Collections;
 using System;
+using System.Collections;
+using System.Text;
 using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
@@ -36,6 +37,7 @@ public class Chessboard : MonoBehaviour
     [SerializeField] private TMP_Text whiteTimeWrite;
     [SerializeField] private GameObject blackTimeWrite2;
     [SerializeField] private GameObject whiteTimeWrite2;
+    [SerializeField] private StockfishManager stockfish;
 
     [SerializeField] private GameObject[] prefabs;
     [SerializeField] private Material[] teamMaterials;
@@ -66,6 +68,17 @@ public class Chessboard : MonoBehaviour
     private float whiteSeconds;
     private float blackMinutes;
     private float blackSeconds;
+    private float AIfrom;
+    private float AIto;
+    private bool whiteKingMoved = false;
+    private bool blackKingMoved = false;
+    private bool whiteRookLeftMoved = false;
+    private bool whiteRookRightMoved = false;
+    private bool blackRookLeftMoved = false;
+    private bool blackRookRightMoved = false;
+    private Vector2Int enPassantTarget = -Vector2Int.one;
+    private int halfmoveClock = 0;
+    private List<Move> pgnMoves = new List<Move>();
 
     private void Awake()
     {
@@ -77,6 +90,11 @@ public class Chessboard : MonoBehaviour
         GenerateAllTiles(tileSize, TILE_COUNT_X, TILE_COUNT_Y);
         SpawnAllPieces();
         PositionAllPieces();
+
+        if (stockfish == null)
+        {
+            stockfish = FindObjectOfType<StockfishManager>();
+        }
     }
 
     private void Update()
@@ -172,11 +190,14 @@ public class Chessboard : MonoBehaviour
                 Vector2Int previousPosition = new Vector2Int(currentlyDragging.currentX, currentlyDragging.currentY);
 
                 bool validMove = MoveTo(currentlyDragging, hitPosition.x, hitPosition.y);
+
                 if (!validMove)
                 {
                     currentlyDragging.SetPosition(GetTileCenter(previousPosition.x, previousPosition.y));
                     currentlyDragging = null;
                 }
+
+                RequestAIMove();
 
                 string from = "";
                 string to = "";
@@ -226,6 +247,7 @@ public class Chessboard : MonoBehaviour
                 currentlyDragging.SetPosition(ray.GetPoint(distance) + Vector3.up * dragOffset);
             }
         }
+
     }
 
     // Tábla generálás
@@ -424,28 +446,31 @@ public class Chessboard : MonoBehaviour
     {
         if (specialMove == SpecialMove.EnPassant)
         {
-            var newMove = moveList[moveList.Count - 1];
-            ChessPiece myPawn = chessPieces[newMove[1].x, newMove[1].y];
-            var targetPawnPosition = moveList[moveList.Count - 2];
-            ChessPiece enemyPawn = chessPieces[targetPawnPosition[1].x, targetPawnPosition[1].y];
+            Vector2Int[] lastMove = moveList[moveList.Count - 1];
+            ChessPiece movingPawn = chessPieces[lastMove[1].x, lastMove[1].y];
 
-            if (myPawn.currentX == enemyPawn.currentX)
+            foreach (var dir in new int[] { -1, 1 })
             {
-                if (myPawn.currentY == enemyPawn.currentY - 1 || myPawn.currentY == enemyPawn.currentY + 1)
+                int targetY = lastMove[1].y + dir;
+                if (targetY >= 0 && targetY < 8)
                 {
-                    if (enemyPawn.team == 0)
+                    ChessPiece targetPawn = chessPieces[lastMove[1].x, targetY];
+                    if (targetPawn != null && targetPawn.type == ChessPieceType.Pawn && targetPawn.canBeCapturedEnPassant)
                     {
-                        deadWhites.Add(enemyPawn);
-                        enemyPawn.SetScale(Vector3.one * deathSize);
-                        enemyPawn.SetPosition(new Vector3(8 * tileSize, yOffset, -1 * tileSize) - bounds + new Vector3(tileSize / 3, 0, tileSize / 3) + (Vector3.forward * deathSpacing) * deadWhites.Count);
+                        chessPieces[targetPawn.currentX, targetPawn.currentY] = null;
+                        if (targetPawn.team == 0)
+                        {
+                            deadWhites.Add(targetPawn);
+                            targetPawn.SetScale(Vector3.one * deathSize);
+                            targetPawn.SetPosition(new Vector3(8 * tileSize, yOffset, -1 * tileSize) - bounds + new Vector3(tileSize / 3, 0, tileSize / 3) + (Vector3.forward * deathSpacing) * deadWhites.Count);
+                        }
+                        else
+                        {
+                            deadBlacks.Add(targetPawn);
+                            targetPawn.SetScale(Vector3.one * deathSize);
+                            targetPawn.SetPosition(new Vector3(-1 * tileSize, yOffset, 8 * tileSize) - bounds + new Vector3(tileSize / 1.5f, 0, tileSize / 1.5f) + (Vector3.back * deathSpacing) * deadBlacks.Count);
+                        }
                     }
-                    else
-                    {
-                        deadBlacks.Add(enemyPawn);
-                        enemyPawn.SetScale(Vector3.one * deathSize);
-                        enemyPawn.SetPosition(new Vector3(-1 * tileSize, yOffset, 8 * tileSize) - bounds + new Vector3(tileSize / 1.5f, 0, tileSize / 1.5f) + (Vector3.back * deathSpacing) * deadBlacks.Count);
-                    }
-                    chessPieces[enemyPawn.currentX, enemyPawn.currentY] = null;
                 }
             }
         }
@@ -458,41 +483,23 @@ public class Chessboard : MonoBehaviour
         if (specialMove == SpecialMove.Castling)
         {
             Vector2Int[] lastMove = moveList[moveList.Count - 1];
-            // Bal Bástya
+            ChessPiece king = chessPieces[lastMove[1].x, lastMove[1].y];
+
+            // Bal oldal
             if (lastMove[1].x == 2)
             {
-                if (lastMove[1].y == 0) // Világos oldal
-                {
-                    ChessPiece rook = chessPieces[0, 0];
-                    chessPieces[3, 0] = rook;
-                    PositionSinglePiece(3, 0);
-                    chessPieces[0, 0] = null;
-                }
-                else if (lastMove[1].y == 7) // Sötét oldal
-                {
-                    ChessPiece rook = chessPieces[0, 7];
-                    chessPieces[3, 7] = rook;
-                    PositionSinglePiece(3, 7);
-                    chessPieces[0, 7] = null;
-                }
+                ChessPiece rook = chessPieces[0, lastMove[1].y];
+                chessPieces[3, lastMove[1].y] = rook;
+                PositionSinglePiece(3, lastMove[1].y);
+                chessPieces[0, lastMove[1].y] = null;
             }
-            // Jobb bástya
+            // Jobb oldal
             else if (lastMove[1].x == 6)
             {
-                if (lastMove[1].y == 0) // Világos oldal
-                {
-                    ChessPiece rook = chessPieces[7, 0];
-                    chessPieces[5, 0] = rook;
-                    PositionSinglePiece(5, 0);
-                    chessPieces[7, 0] = null;
-                }
-                else if (lastMove[1].y == 7) // Sötét oldal
-                {
-                    ChessPiece rook = chessPieces[7, 7];
-                    chessPieces[5, 7] = rook;
-                    PositionSinglePiece(5, 7);
-                    chessPieces[7, 7] = null;
-                }
+                ChessPiece rook = chessPieces[7, lastMove[1].y];
+                chessPieces[5, lastMove[1].y] = rook;
+                PositionSinglePiece(5, lastMove[1].y);
+                chessPieces[7, lastMove[1].y] = null;
             }
         }
     }
@@ -702,6 +709,66 @@ public class Chessboard : MonoBehaviour
         }
 
         Vector2Int previousPosition = new Vector2Int(cp.currentX, cp.currentY);
+        bool resetHalfmove = false;
+
+        // Alapértelmezett en passant törlés minden gyalogra
+        foreach (var piece in chessPieces)
+            if (piece != null && piece.type == ChessPieceType.Pawn)
+                piece.canBeCapturedEnPassant = false;
+
+        // En passant ütés kezelése
+        if (cp.type == ChessPieceType.Pawn && enPassantTarget == new Vector2Int(x, y))
+        {
+            int captureY = (cp.team == 0) ? y - 1 : y + 1;
+            ChessPiece capturedPawn = chessPieces[x, captureY];
+            if (capturedPawn != null && capturedPawn.type == ChessPieceType.Pawn)
+            {
+                RemoveCapturedPiece(capturedPawn);
+                chessPieces[x, captureY] = null;
+            }
+        }
+
+        // Ha ütés történik
+        if (chessPieces[x, y] != null)
+            resetHalfmove = true;
+
+        // Ha gyalog lép
+        if (cp.type == ChessPieceType.Pawn)
+            resetHalfmove = true;
+
+        // Gyalog dupla lépés
+        if (cp.type == ChessPieceType.Pawn)
+        {
+            int startRow = (cp.team == 0) ? 1 : 6;
+
+            if (previousPosition.y == startRow && Mathf.Abs(y - previousPosition.y) == 2)
+            {
+                int epY = (previousPosition.y + y) / 2;
+                enPassantTarget = new Vector2Int(x, epY);
+            }
+        }
+
+        // Király mozgás
+        if (cp.type == ChessPieceType.King)
+        {
+            if (cp.team == 0) whiteKingMoved = true;
+            else blackKingMoved = true;
+        }
+
+        // Bástya mozgás
+        if (cp.type == ChessPieceType.Rook)
+        {
+            if (cp.team == 0)
+            {
+                if (previousPosition.x == 0) whiteRookLeftMoved = true;
+                if (previousPosition.x == 7) whiteRookRightMoved = true;
+            }
+            else
+            {
+                if (previousPosition.x == 0) blackRookLeftMoved = true;
+                if (previousPosition.x == 7) blackRookRightMoved = true;
+            }
+        }
 
         if (chessPieces[x, y] != null)
         {
@@ -734,13 +801,35 @@ public class Chessboard : MonoBehaviour
                 ocp.SetScale(Vector3.one * deathSize);
                 ocp.SetPosition(new Vector3(-1 * tileSize, yOffset, 8 * tileSize) - bounds + new Vector3(tileSize / 1.5f, 0, tileSize / 1.5f) + (Vector3.back * deathSpacing) * deadBlacks.Count);
             }
-        }
 
+            // Ha bástyát ütnek, sánc jog elveszik
+            if (ocp.type == ChessPieceType.Rook)
+            {
+                if (ocp.team == 0)
+                {
+                    if (x == 0) whiteRookLeftMoved = true;
+                    if (x == 7) whiteRookRightMoved = true;
+                }
+                else
+                {
+                    if (x == 0) blackRookLeftMoved = true;
+                    if (x == 7) blackRookRightMoved = true;
+                }
+            }
+        }
+        
+        // Bábu mozgatás a táblán
         chessPieces[x, y] = cp;
         chessPieces[previousPosition.x, previousPosition.y] = null;
 
         PositionSinglePiece(x, y);
 
+        if (resetHalfmove)
+            halfmoveClock = 0;
+        else
+            halfmoveClock++;
+
+        // Játékosváltás
         isWhiteTurn = !isWhiteTurn;
         if (isWhiteTurn)
         {
@@ -759,6 +848,22 @@ public class Chessboard : MonoBehaviour
             CheckMate(cp.team);
         }
 
+        // PGN hozzáadás
+        Move m = new Move
+        {
+            piece = cp.type,
+            from = previousPosition,
+            to = new Vector2Int(x, y),
+            isCapture = chessPieces[x, y] != null,
+            isCheck = false, // késõbb update
+            isCheckmate = false,
+            promotion = specialMove == SpecialMove.Promotion ? ChessPieceType.Queen : ChessPieceType.None, // alap Queen, a promóció menü állíthatja
+            isKingSideCastle = specialMove == SpecialMove.Castling && x == 6,
+            isQueenSideCastle = specialMove == SpecialMove.Castling && x == 2
+        };
+
+        pgnMoves.Add(m);
+
         return true;
     }
     private Vector2Int LookupTileIndex(GameObject hitInfo)
@@ -775,6 +880,42 @@ public class Chessboard : MonoBehaviour
         }
         return -Vector2Int.one;
     }
+    private void RemoveCapturedPiece(ChessPiece piece)
+    {
+        if (piece.team == 0)
+        {
+            deadWhites.Add(piece);
+            piece.SetScale(Vector3.one * deathSize);
+            piece.SetPosition(new Vector3(8 * tileSize, yOffset, -1 * tileSize) - bounds + new Vector3(tileSize / 3, 0, tileSize / 3) + (Vector3.forward * deathSpacing) * deadWhites.Count);
+        }
+        else
+        {
+            deadBlacks.Add(piece);
+            piece.SetScale(Vector3.one * deathSize);
+            piece.SetPosition(new Vector3(-1 * tileSize, yOffset, 8 * tileSize) - bounds + new Vector3(tileSize / 1.5f, 0, tileSize / 1.5f) + (Vector3.back * deathSpacing) * deadBlacks.Count);
+        }
+
+        // Ha bástya ütés történt, frissítjük a sáncolási jogot
+        if (piece.type == ChessPieceType.Rook)
+        {
+            if (piece.team == 0)
+            {
+                if (piece.currentX == 0) whiteRookLeftMoved = true;
+                if (piece.currentX == 7) whiteRookRightMoved = true;
+            }
+            else
+            {
+                if (piece.currentX == 0) blackRookLeftMoved = true;
+                if (piece.currentX == 7) blackRookRightMoved = true;
+            }
+        }
+
+        // Ha király ütés történik (matt)
+        if (piece.type == ChessPieceType.King)
+        {
+            CheckMate(piece.team == 0 ? 1 : 0);
+        }
+    }
     private void Resume()
     {
         escMenu.SetActive(false);
@@ -788,6 +929,368 @@ public class Chessboard : MonoBehaviour
         moves.SetActive(false);
         Time.timeScale = 0f;
         gameIsPaused = true;
+    }
+    public void SaveGame()
+    {
+        string fen = BoardToFEN();
+        PlayerPrefs.SetString("SavedFEN", fen);
+        PlayerPrefs.Save();
+
+        Debug.Log("Game saved: " + fen);
+    }
+    void ClearBoard()
+    {
+        for (int x = 0; x < TILE_COUNT_X; x++)
+        {
+            for (int y = 0; y < TILE_COUNT_Y; y++)
+            {
+                if (chessPieces[x, y] != null)
+                    Destroy(chessPieces[x, y].gameObject);
+
+                chessPieces[x, y] = null;
+            }
+        }
+
+        moveList.Clear();
+    }
+    ChessPieceType FenCharToPiece(char c)
+    {
+        return char.ToLower(c) switch
+        {
+            'p' => ChessPieceType.Pawn,
+            'r' => ChessPieceType.Rook,
+            'n' => ChessPieceType.Knight,
+            'b' => ChessPieceType.Bishop,
+            'q' => ChessPieceType.Queen,
+            'k' => ChessPieceType.King,
+            _ => ChessPieceType.Pawn
+        };
+    }
+    public string ExportPGN()
+    {
+        StringBuilder pgn = new StringBuilder();
+
+        // Header
+        pgn.AppendLine("[Event \"Unity Chess\"]");
+        pgn.AppendLine("[Site \"Local\"]");
+        pgn.AppendLine("[White \"Player\"]");
+        pgn.AppendLine("[Black \"Stockfish\"]");
+        pgn.AppendLine("[Result \"*\"]");
+        pgn.AppendLine();
+
+        for (int i = 0; i < pgnMoves.Count; i++)
+        {
+            if (i % 2 == 0)
+                pgn.Append($"{(i / 2) + 1}. ");
+
+            pgn.Append(MoveToPGN(pgnMoves[i]));
+            pgn.Append(" ");
+        }
+
+        return pgn.ToString();
+    }
+    public void SavePGNToFile()
+    {
+        string pgn = ExportPGN();
+        string path = Application.persistentDataPath + "/game.pgn";
+        System.IO.File.WriteAllText(path, pgn);
+
+        Debug.Log("PGN saved to: " + path);
+    }
+    public async void RequestAIMove()
+    {
+        if (isWhiteTurn) return; // AI fekete
+
+        string fen = BoardToFEN();
+        Debug.Log("FEN sent to Stockfish: " + fen);
+
+        string bestMove = await stockfish.GetBestMove(fen, 1000);
+        Debug.Log("Stockfish move: " + bestMove);
+
+        // pl. e2e4
+        Vector2Int from = UCIToPosition(bestMove[0], bestMove[1]);
+        Vector2Int to = UCIToPosition(bestMove[2], bestMove[3]);
+
+        bool isPromotion = bestMove.Length == 5;
+        char promotionChar = isPromotion ? bestMove[4] : ' ';
+
+        ChessPiece aiPiece = chessPieces[from.x, from.y];
+        if (aiPiece == null)
+        {
+            Debug.LogError("AI piece not found!");
+            return;
+        }
+
+        availableMoves = aiPiece.GetAvailableMoves(ref chessPieces, TILE_COUNT_X, TILE_COUNT_Y);
+        specialMove = aiPiece.GetSpecialMoves(ref chessPieces, ref moveList, ref availableMoves);
+
+        MoveTo(aiPiece, to.x, to.y);
+
+        // AI promóció kezelése
+        if (isPromotion)
+        {
+            PromoteAIPawn(aiPiece, promotionChar);
+        }
+    }
+    public string BoardToFEN()
+    {
+        string fen = "";
+
+        // Táblakép (8 -> 1 sor)
+        for (int y = 7; y >= 0; y--) 
+        {
+            int empty = 0;
+
+            for (int x = 0; x < 8; x++)
+            {
+                ChessPiece piece = chessPieces[x,y];
+                
+                if (piece == null)
+                {
+                    empty++;
+                }
+                else
+                {
+                    if(empty > 0)
+                    {
+                        fen += empty;
+                        empty = 0;
+                    }
+
+                    fen += PieceToFEN(piece);
+                }
+            }
+
+            if (empty > 0)
+            {
+                fen += empty;
+            }
+
+            if(y > 0)
+            {
+                fen += "/";
+            }
+        }
+
+        // Ki jön
+        fen += isWhiteTurn ? " w " : " b ";
+
+        // Sáncolás
+        string castling = "";
+        if (!whiteKingMoved && !whiteRookRightMoved) castling += "K";
+        if (!whiteKingMoved && !whiteRookLeftMoved) castling += "Q";
+        if (!blackKingMoved && !blackRookRightMoved) castling += "k";
+        if (!blackKingMoved && !blackRookLeftMoved) castling += "q";
+        fen += castling == "" ? "- " : castling + " ";
+
+        // En passant
+        if (enPassantTarget == -Vector2Int.one)
+        {
+            fen += "- ";
+        }
+        else
+        {
+            char file = (char)('a' + enPassantTarget.x);
+            char rank = (char)('1' + enPassantTarget.y);
+            fen += $"{file}{rank} ";
+        }
+
+        // Halfmove clock
+        fen += halfmoveClock + " ";
+
+        // Fullmove number
+        fen += (moveList.Count / 2) + 1;
+
+        return fen;
+    }
+    public void LoadFromFEN()
+    {
+        ClearBoard();
+
+        string[] parts = fen.Split(' ');
+        string boardPart = parts[0];
+        string turnPart = parts[1];
+        string castlingPart = parts[2];
+        string enPassantPart = parts[3];
+        halfmoveClock = int.Parse(parts[4]);
+        int fullmove = int.Parse(parts[5]);
+
+        // Táblakép
+        string[] ranks = boardPart.Split('/');
+        for (int y = 7; y >= 0; y--)
+        {
+            int x = 0;
+            foreach (char c in ranks[7 - y])
+            {
+                if (char.IsDigit(c))
+                {
+                    x += (int)char.GetNumericValue(c);
+                }
+                else
+                {
+                    ChessPieceType type = FenCharToPiece(c);
+                    int team = char.IsUpper(c) ? 0 : 1;
+
+                    ChessPiece piece = SpawnSinglePiece(type, team);
+                    piece.currentX = x;
+                    piece.currentY = y;
+                    piece.transform.position = GetTileCenter(x, y);
+                    chessPieces[x, y] = piece;
+
+                    x++;
+                }
+            }
+        }
+
+        // Ki jön
+        isWhiteTurn = turnPart == "w";
+
+        // Sáncolási jogok
+        whiteKingMoved = !castlingPart.Contains("K") && !castlingPart.Contains("Q");
+        whiteRookRightMoved = !castlingPart.Contains("K");
+        whiteRookLeftMoved = !castlingPart.Contains("Q");
+
+        blackKingMoved = !castlingPart.Contains("k") && !castlingPart.Contains("q");
+        blackRookRightMoved = !castlingPart.Contains("k");
+        blackRookLeftMoved = !castlingPart.Contains("q");
+
+        // En passant
+        if (enPassantPart == "-")
+        {
+            enPassantTarget = -Vector2Int.one;
+        }
+        else
+        {
+            int file = enPassantPart[0] - 'a';
+            int rank = enPassantPart[1] - '1';
+            enPassantTarget = new Vector2Int(file, rank);
+        }
+
+        Debug.Log("Game loaded from FEN");
+    }
+    private char PieceToFEN(ChessPiece piece)
+    {
+        char c = piece.type switch
+        {
+            ChessPieceType.Pawn => 'p',
+            ChessPieceType.Rook => 'r',
+            ChessPieceType.Knight => 'n',
+            ChessPieceType.Bishop => 'b',
+            ChessPieceType.Queen => 'q',
+            ChessPieceType.King => 'k',
+            _ => ' '
+        };
+
+        return piece.team == 0 ? char.ToUpper(c) : c;
+    }
+    string SquareToAlg(Vector2Int pos)
+    {
+        char file = (char)('a' + pos.x);
+        char rank = (char)('1' + pos.y);
+        return $"{file}{rank}";
+    }
+    string PieceToPGN(ChessPieceType type)
+    {
+        return type switch
+        {
+            ChessPieceType.Knight => "N",
+            ChessPieceType.Bishop => "B",
+            ChessPieceType.Rook => "R",
+            ChessPieceType.Queen => "Q",
+            ChessPieceType.King => "K",
+            _ => "" // gyalog
+        };
+    }
+    string MoveToPGN(Move move)
+    {
+        // Sáncolás
+        if (move.isKingSideCastle) return "O-O";
+        if (move.isQueenSideCastle) return "O-O-O";
+
+        StringBuilder sb = new StringBuilder();
+        string piece = PieceToPGN(move.piece);
+        sb.Append(piece);
+
+        if (move.isCapture)
+        {
+            if (move.piece == ChessPieceType.Pawn)
+                sb.Append((char)('a' + move.from.x)); // gyalog ütésnél oszlop
+            sb.Append("x");
+        }
+
+        sb.Append(SquareToAlg(move.to));
+
+        if (move.promotion != ChessPieceType.None)
+        {
+            sb.Append("=");
+            sb.Append(PieceToPGN(move.promotion));
+        }
+
+        if (move.isCheckmate) sb.Append("#");
+        else if (move.isCheck) sb.Append("+");
+
+        return sb.ToString();
+
+        // Figura
+        sb.Append(piece);
+
+        // Ütés
+        if (move.isCapture)
+        {
+            // gyalogütésnél oszlop kell (exd5)
+            if (move.piece == ChessPieceType.Pawn)
+                sb.Append((char)('a' + move.from.x));
+
+            sb.Append("x");
+        }
+
+        // Célmezõ
+        sb.Append(SquareToAlg(move.to));
+
+        // Promóció
+        if (move.promotion != ChessPieceType.None)
+        {
+            sb.Append("=");
+            sb.Append(PieceToPGN(move.promotion));
+        }
+
+        // Sakk/Matt
+        if (move.isCheckmate) sb.Append("#");
+        else if (move.isCheck) sb.Append("+");
+
+        return sb.ToString();
+    }
+    private Vector2Int UCIToPosition(char file, char rank)
+    {
+        int x = file - 'a';
+        int y = rank - '1';
+        return new Vector2Int(x, y);
+    }
+    private void PromoteAIPawn(ChessPiece pawn, char promotionChar)
+    {
+        ChessPieceType newType = promotionChar switch
+        {
+            'q' => ChessPieceType.Queen,
+            'r' => ChessPieceType.Rook,
+            'b' => ChessPieceType.Bishop,
+            'n' => ChessPieceType.Knight,
+            _ => ChessPieceType.Queen
+        };
+
+        int x = pawn.currentX;
+        int y = pawn.currentY;
+        int team = pawn.team;
+
+        // Régi gyalog törlése
+        Destroy(pawn.gameObject);
+        chessPieces[x, y] = null;
+
+        // Új figura létrehozása
+        ChessPiece newPiece = SpawnSinglePiece(newType, team);
+        newPiece.currentX = x;
+        newPiece.currentY = y;
+        newPiece.transform.position = GetTileCenter(x, y);
+        chessPieces[x, y] = newPiece;
     }
 
     private void FillDictionary(int tileCountX, int tileCountY)
@@ -941,6 +1444,8 @@ public class Chessboard : MonoBehaviour
                 pieceMenu.SetActive(false);
             }
         }
+        Move lastMove2 = pgnMoves[pgnMoves.Count - 1];
+        lastMove2.promotion = ChessPieceType.Queen;
     }
     public void OnBishopClick()
     {
@@ -968,6 +1473,8 @@ public class Chessboard : MonoBehaviour
                 pieceMenu.SetActive(false);
             }
         }
+        Move lastMove2 = pgnMoves[pgnMoves.Count - 1];
+        lastMove2.promotion = ChessPieceType.Bishop;
     }
     public void OnKnightClick()
     {
@@ -995,6 +1502,8 @@ public class Chessboard : MonoBehaviour
                 pieceMenu.SetActive(false);
             }
         }
+        Move lastMove2 = pgnMoves[pgnMoves.Count - 1];
+        lastMove2.promotion = ChessPieceType.Knight;
     }
     public void OnRookClick()
     {
@@ -1022,5 +1531,7 @@ public class Chessboard : MonoBehaviour
                 pieceMenu.SetActive(false);
             }
         }
+        Move lastMove2 = pgnMoves[pgnMoves.Count - 1];
+        lastMove2.promotion = ChessPieceType.Rook;
     }
 }
