@@ -1103,7 +1103,18 @@ public class Chessboard : MonoBehaviour
 
         return fen;
     }
-    public void LoadFromFEN()
+    public void LoadGameFromSave()
+    {
+        if (!PlayerPrefs.HasKey("SavedFEN"))
+        {
+            Debug.LogWarning("No saved game found!");
+            return;
+        }
+
+        string savedFEN = PlayerPrefs.GetString("SavedFEN");
+        LoadFromFEN(savedFEN); // átadjuk paraméterként a mentett FEN-t
+    }
+    public void LoadFromFEN(string fen)
     {
         ClearBoard();
 
@@ -1226,35 +1237,6 @@ public class Chessboard : MonoBehaviour
             sb.Append(PieceToPGN(move.promotion));
         }
 
-        if (move.isCheckmate) sb.Append("#");
-        else if (move.isCheck) sb.Append("+");
-
-        return sb.ToString();
-
-        // Figura
-        sb.Append(piece);
-
-        // Ütés
-        if (move.isCapture)
-        {
-            // gyalogütésnél oszlop kell (exd5)
-            if (move.piece == ChessPieceType.Pawn)
-                sb.Append((char)('a' + move.from.x));
-
-            sb.Append("x");
-        }
-
-        // Célmezõ
-        sb.Append(SquareToAlg(move.to));
-
-        // Promóció
-        if (move.promotion != ChessPieceType.None)
-        {
-            sb.Append("=");
-            sb.Append(PieceToPGN(move.promotion));
-        }
-
-        // Sakk/Matt
         if (move.isCheckmate) sb.Append("#");
         else if (move.isCheck) sb.Append("+");
 
