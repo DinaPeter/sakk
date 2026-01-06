@@ -4,6 +4,7 @@ using System.Text;
 using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
+using UnityEngine.UI;
 
 public enum SpecialMove
 {
@@ -11,6 +12,27 @@ public enum SpecialMove
     EnPassant,
     Castling,
     Promotion,
+}
+
+public enum AIDifficulty
+{
+    Easy,
+    Medium,
+    Hard,
+    Expert
+}
+
+public enum AIColor
+{
+    White,
+    Black
+}
+
+public enum MenuState
+{
+    None,
+    Pause,
+    Settings
 }
 
 public class Chessboard : MonoBehaviour
@@ -38,6 +60,10 @@ public class Chessboard : MonoBehaviour
     [SerializeField] private GameObject blackTimeWrite2;
     [SerializeField] private GameObject whiteTimeWrite2;
     [SerializeField] private StockfishManager stockfish;
+    [SerializeField] public AIDifficulty aiDifficulty = AIDifficulty.Easy;
+    [SerializeField] private Camera mainCamera;      // fehér nézet
+    [SerializeField] private Camera secondaryCamera; // fekete nézet
+    [SerializeField] public GameObject settingsMenu;
 
     [SerializeField] private GameObject[] prefabs;
     [SerializeField] private Material[] teamMaterials;
@@ -79,6 +105,8 @@ public class Chessboard : MonoBehaviour
     private Vector2Int enPassantTarget = -Vector2Int.one;
     private int halfmoveClock = 0;
     private List<Move> pgnMoves = new List<Move>();
+    public AIColor aiColor = AIColor.Black;
+    private MenuState currentMenuState = MenuState.None;
 
     private void Awake()
     {
@@ -94,6 +122,14 @@ public class Chessboard : MonoBehaviour
         if (stockfish == null)
         {
             stockfish = FindObjectOfType<StockfishManager>();
+        }
+
+        SetupCameraForPlayer();
+        ApplyAIDifficulty();
+
+        if (IsAITurn())
+        {
+            RequestAIMove();
         }
     }
 
@@ -134,13 +170,17 @@ public class Chessboard : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.Escape))
         {
-            if (gameIsPaused)
+            if (currentMenuState == MenuState.None)
             {
-                Resume();
+                SetMenuState(MenuState.Pause);
             }
-            else
+            else if (currentMenuState == MenuState.Pause)
             {
-                Pause();
+                SetMenuState(MenuState.None);
+            }
+            else if (currentMenuState == MenuState.Settings)
+            {
+                SetMenuState(MenuState.Pause);
             }
         }
 
@@ -198,25 +238,6 @@ public class Chessboard : MonoBehaviour
                 }
 
                 RequestAIMove();
-
-                string from = "";
-                string to = "";
-                string type = "";
-
-                foreach (var item in movesToWrite)
-                {
-                    if (previousPosition == item.Key)
-                    {
-                        from = item.Value;
-                    }
-                    if (hitPosition == item.Key)
-                    {
-                        to = item.Value;
-                    }
-                }
-
-                type = TypeCheck(currentlyDragging);
-                write.text += type + ": " + from + " -> " + to + "\n";
 
                 RemoveHighlightTiles();
                 currentlyDragging = null;
@@ -862,6 +883,7 @@ public class Chessboard : MonoBehaviour
             isQueenSideCastle = specialMove == SpecialMove.Castling && x == 2
         };
 
+        WriteMoveToUI(cp, previousPosition, new Vector2Int(x, y));
         pgnMoves.Add(m);
 
         return true;
@@ -916,28 +938,6 @@ public class Chessboard : MonoBehaviour
             CheckMate(piece.team == 0 ? 1 : 0);
         }
     }
-    private void Resume()
-    {
-        escMenu.SetActive(false);
-        moves.SetActive(true);
-        Time.timeScale = 1f;
-        gameIsPaused = false;
-    }
-    private void Pause()
-    {
-        escMenu.SetActive(true);
-        moves.SetActive(false);
-        Time.timeScale = 0f;
-        gameIsPaused = true;
-    }
-    public void SaveGame()
-    {
-        string fen = BoardToFEN();
-        PlayerPrefs.SetString("SavedFEN", fen);
-        PlayerPrefs.Save();
-
-        Debug.Log("Game saved: " + fen);
-    }
     void ClearBoard()
     {
         for (int x = 0; x < TILE_COUNT_X; x++)
@@ -965,72 +965,6 @@ public class Chessboard : MonoBehaviour
             'k' => ChessPieceType.King,
             _ => ChessPieceType.Pawn
         };
-    }
-    public string ExportPGN()
-    {
-        StringBuilder pgn = new StringBuilder();
-
-        // Header
-        pgn.AppendLine("[Event \"Unity Chess\"]");
-        pgn.AppendLine("[Site \"Local\"]");
-        pgn.AppendLine("[White \"Player\"]");
-        pgn.AppendLine("[Black \"Stockfish\"]");
-        pgn.AppendLine("[Result \"*\"]");
-        pgn.AppendLine();
-
-        for (int i = 0; i < pgnMoves.Count; i++)
-        {
-            if (i % 2 == 0)
-                pgn.Append($"{(i / 2) + 1}. ");
-
-            pgn.Append(MoveToPGN(pgnMoves[i]));
-            pgn.Append(" ");
-        }
-
-        return pgn.ToString();
-    }
-    public void SavePGNToFile()
-    {
-        string pgn = ExportPGN();
-        string path = Application.persistentDataPath + "/game.pgn";
-        System.IO.File.WriteAllText(path, pgn);
-
-        Debug.Log("PGN saved to: " + path);
-    }
-    public async void RequestAIMove()
-    {
-        if (isWhiteTurn) return; // AI fekete
-
-        string fen = BoardToFEN();
-        Debug.Log("FEN sent to Stockfish: " + fen);
-
-        string bestMove = await stockfish.GetBestMove(fen, 1000);
-        Debug.Log("Stockfish move: " + bestMove);
-
-        // pl. e2e4
-        Vector2Int from = UCIToPosition(bestMove[0], bestMove[1]);
-        Vector2Int to = UCIToPosition(bestMove[2], bestMove[3]);
-
-        bool isPromotion = bestMove.Length == 5;
-        char promotionChar = isPromotion ? bestMove[4] : ' ';
-
-        ChessPiece aiPiece = chessPieces[from.x, from.y];
-        if (aiPiece == null)
-        {
-            Debug.LogError("AI piece not found!");
-            return;
-        }
-
-        availableMoves = aiPiece.GetAvailableMoves(ref chessPieces, TILE_COUNT_X, TILE_COUNT_Y);
-        specialMove = aiPiece.GetSpecialMoves(ref chessPieces, ref moveList, ref availableMoves);
-
-        MoveTo(aiPiece, to.x, to.y);
-
-        // AI promóció kezelése
-        if (isPromotion)
-        {
-            PromoteAIPawn(aiPiece, promotionChar);
-        }
     }
     public string BoardToFEN()
     {
@@ -1103,82 +1037,6 @@ public class Chessboard : MonoBehaviour
 
         return fen;
     }
-    public void LoadGameFromSave()
-    {
-        if (!PlayerPrefs.HasKey("SavedFEN"))
-        {
-            Debug.LogWarning("No saved game found!");
-            return;
-        }
-
-        string savedFEN = PlayerPrefs.GetString("SavedFEN");
-        LoadFromFEN(savedFEN); // átadjuk paraméterként a mentett FEN-t
-    }
-    public void LoadFromFEN(string fen)
-    {
-        ClearBoard();
-
-        string[] parts = fen.Split(' ');
-        string boardPart = parts[0];
-        string turnPart = parts[1];
-        string castlingPart = parts[2];
-        string enPassantPart = parts[3];
-        halfmoveClock = int.Parse(parts[4]);
-        int fullmove = int.Parse(parts[5]);
-
-        // Táblakép
-        string[] ranks = boardPart.Split('/');
-        for (int y = 7; y >= 0; y--)
-        {
-            int x = 0;
-            foreach (char c in ranks[7 - y])
-            {
-                if (char.IsDigit(c))
-                {
-                    x += (int)char.GetNumericValue(c);
-                }
-                else
-                {
-                    ChessPieceType type = FenCharToPiece(c);
-                    int team = char.IsUpper(c) ? 0 : 1;
-
-                    ChessPiece piece = SpawnSinglePiece(type, team);
-                    piece.currentX = x;
-                    piece.currentY = y;
-                    piece.transform.position = GetTileCenter(x, y);
-                    chessPieces[x, y] = piece;
-
-                    x++;
-                }
-            }
-        }
-
-        // Ki jön
-        isWhiteTurn = turnPart == "w";
-
-        // Sáncolási jogok
-        whiteKingMoved = !castlingPart.Contains("K") && !castlingPart.Contains("Q");
-        whiteRookRightMoved = !castlingPart.Contains("K");
-        whiteRookLeftMoved = !castlingPart.Contains("Q");
-
-        blackKingMoved = !castlingPart.Contains("k") && !castlingPart.Contains("q");
-        blackRookRightMoved = !castlingPart.Contains("k");
-        blackRookLeftMoved = !castlingPart.Contains("q");
-
-        // En passant
-        if (enPassantPart == "-")
-        {
-            enPassantTarget = -Vector2Int.one;
-        }
-        else
-        {
-            int file = enPassantPart[0] - 'a';
-            int rank = enPassantPart[1] - '1';
-            enPassantTarget = new Vector2Int(file, rank);
-        }
-
-        Debug.Log("Game loaded from FEN");
-    }
     private char PieceToFEN(ChessPiece piece)
     {
         char c = piece.type switch
@@ -1248,33 +1106,6 @@ public class Chessboard : MonoBehaviour
         int y = rank - '1';
         return new Vector2Int(x, y);
     }
-    private void PromoteAIPawn(ChessPiece pawn, char promotionChar)
-    {
-        ChessPieceType newType = promotionChar switch
-        {
-            'q' => ChessPieceType.Queen,
-            'r' => ChessPieceType.Rook,
-            'b' => ChessPieceType.Bishop,
-            'n' => ChessPieceType.Knight,
-            _ => ChessPieceType.Queen
-        };
-
-        int x = pawn.currentX;
-        int y = pawn.currentY;
-        int team = pawn.team;
-
-        // Régi gyalog törlése
-        Destroy(pawn.gameObject);
-        chessPieces[x, y] = null;
-
-        // Új figura létrehozása
-        ChessPiece newPiece = SpawnSinglePiece(newType, team);
-        newPiece.currentX = x;
-        newPiece.currentY = y;
-        newPiece.transform.position = GetTileCenter(x, y);
-        chessPieces[x, y] = newPiece;
-    }
-
     private void FillDictionary(int tileCountX, int tileCountY)
     {
         string letter = "";
@@ -1399,7 +1230,150 @@ public class Chessboard : MonoBehaviour
 
         return type;
     }
+    private void WriteMoveToUI(ChessPiece piece, Vector2Int from, Vector2Int to)
+    {
+        string fromText = movesToWrite[from];
+        string toText = movesToWrite[to];
+        string type = TypeCheck(piece);
 
+        write.text += type + ": " + fromText + " -> " + toText + "\n";
+    }
+
+    // Menü kezelés
+    public void SetMenuState(MenuState newState)
+    {
+        currentMenuState = newState;
+
+        escMenu.SetActive(newState == MenuState.Pause);
+        settingsMenu.SetActive(newState == MenuState.Settings);
+        moves.SetActive(newState == MenuState.None);
+
+        Time.timeScale = (newState == MenuState.None) ? 1f : 0f;
+        gameIsPaused = newState != MenuState.None;
+    }
+    private void Resume()
+    {
+        SetMenuState(MenuState.None);
+    }
+    private void Pause()
+    {
+        SetMenuState(MenuState.Pause);
+    }
+    public void SaveGame()
+    {
+        string fen = BoardToFEN();
+        PlayerPrefs.SetString("SavedFEN", fen);
+        PlayerPrefs.Save();
+
+        Debug.Log("Game saved: " + fen);
+    }
+    public string ExportPGN()
+    {
+        StringBuilder pgn = new StringBuilder();
+
+        // Header
+        pgn.AppendLine("[Event \"Unity Chess\"]");
+        pgn.AppendLine("[Site \"Local\"]");
+        pgn.AppendLine("[White \"Player\"]");
+        pgn.AppendLine("[Black \"Stockfish\"]");
+        pgn.AppendLine("[Result \"*\"]");
+        pgn.AppendLine();
+
+        for (int i = 0; i < pgnMoves.Count; i++)
+        {
+            if (i % 2 == 0)
+                pgn.Append($"{(i / 2) + 1}. ");
+
+            pgn.Append(MoveToPGN(pgnMoves[i]));
+            pgn.Append(" ");
+        }
+
+        return pgn.ToString();
+    }
+    public void SavePGNToFile()
+    {
+        string pgn = ExportPGN();
+        string path = Application.persistentDataPath + "/game.pgn";
+        System.IO.File.WriteAllText(path, pgn);
+
+        Debug.Log("PGN saved to: " + path);
+    }
+    public void LoadGameFromSave()
+    {
+        if (!PlayerPrefs.HasKey("SavedFEN"))
+        {
+            Debug.LogWarning("No saved game found!");
+            return;
+        }
+
+        string savedFEN = PlayerPrefs.GetString("SavedFEN");
+        LoadFromFEN(savedFEN); // átadjuk paraméterként a mentett FEN-t
+    }
+    public void LoadFromFEN(string fen)
+    {
+        ClearBoard();
+
+        string[] parts = fen.Split(' ');
+        string boardPart = parts[0];
+        string turnPart = parts[1];
+        string castlingPart = parts[2];
+        string enPassantPart = parts[3];
+        halfmoveClock = int.Parse(parts[4]);
+        int fullmove = int.Parse(parts[5]);
+
+        // Táblakép
+        string[] ranks = boardPart.Split('/');
+        for (int y = 7; y >= 0; y--)
+        {
+            int x = 0;
+            foreach (char c in ranks[7 - y])
+            {
+                if (char.IsDigit(c))
+                {
+                    x += (int)char.GetNumericValue(c);
+                }
+                else
+                {
+                    ChessPieceType type = FenCharToPiece(c);
+                    int team = char.IsUpper(c) ? 0 : 1;
+
+                    ChessPiece piece = SpawnSinglePiece(type, team);
+                    piece.currentX = x;
+                    piece.currentY = y;
+                    piece.transform.position = GetTileCenter(x, y);
+                    chessPieces[x, y] = piece;
+
+                    x++;
+                }
+            }
+        }
+
+        // Ki jön
+        isWhiteTurn = turnPart == "w";
+
+        // Sáncolási jogok
+        whiteKingMoved = !castlingPart.Contains("K") && !castlingPart.Contains("Q");
+        whiteRookRightMoved = !castlingPart.Contains("K");
+        whiteRookLeftMoved = !castlingPart.Contains("Q");
+
+        blackKingMoved = !castlingPart.Contains("k") && !castlingPart.Contains("q");
+        blackRookRightMoved = !castlingPart.Contains("k");
+        blackRookLeftMoved = !castlingPart.Contains("q");
+
+        // En passant
+        if (enPassantPart == "-")
+        {
+            enPassantTarget = -Vector2Int.one;
+        }
+        else
+        {
+            int file = enPassantPart[0] - 'a';
+            int rank = enPassantPart[1] - '1';
+            enPassantTarget = new Vector2Int(file, rank);
+        }
+
+        Debug.Log("Game loaded from FEN");
+    }
     public void OnQueenClick()
     {
         Vector2Int[] lastMove = moveList[moveList.Count - 1];
@@ -1515,5 +1489,124 @@ public class Chessboard : MonoBehaviour
         }
         Move lastMove2 = pgnMoves[pgnMoves.Count - 1];
         lastMove2.promotion = ChessPieceType.Rook;
+    }
+
+    // AI
+    private bool IsAITurn()
+    {
+        if (aiColor == AIColor.White)
+            return isWhiteTurn;
+        else
+            return !isWhiteTurn;
+    }
+    private void SetupCameraForPlayer()
+    {
+        if (aiColor == AIColor.White)
+        {
+            // AI fehér -> játékos fekete
+            mainCamera.gameObject.SetActive(false);
+            secondaryCamera.gameObject.SetActive(true);
+            mainCamera.GetComponent<AudioListener>().enabled = false;
+            secondaryCamera.GetComponent<AudioListener>().enabled = true;
+        }
+        else
+        {
+            // AI fekete -> játékos fehér
+            mainCamera.gameObject.SetActive(true);
+            secondaryCamera.gameObject.SetActive(false);
+            mainCamera.GetComponent<AudioListener>().enabled = true;
+            secondaryCamera.GetComponent<AudioListener>().enabled = false;
+        }
+    }
+    public async void RequestAIMove()
+    {
+        if (!IsAITurn()) return; // AI fekete
+
+        string fen = BoardToFEN();
+        Debug.Log("FEN sent to Stockfish: " + fen);
+
+        int thinkTime = aiDifficulty switch
+        {
+            AIDifficulty.Easy => 200,
+            AIDifficulty.Medium => 500,
+            AIDifficulty.Hard => 1000,
+            AIDifficulty.Expert => 2000,
+            _ => 500
+        };
+
+        string bestMove = await stockfish.GetBestMove(fen, thinkTime);
+        Debug.Log("Stockfish move: " + bestMove);
+
+        // pl. e2e4
+        Vector2Int from = UCIToPosition(bestMove[0], bestMove[1]);
+        Vector2Int to = UCIToPosition(bestMove[2], bestMove[3]);
+
+        bool isPromotion = bestMove.Length == 5;
+        char promotionChar = isPromotion ? bestMove[4] : ' ';
+
+        ChessPiece aiPiece = chessPieces[from.x, from.y];
+        if (aiPiece == null)
+        {
+            Debug.LogError("AI piece not found!");
+            return;
+        }
+
+        availableMoves = aiPiece.GetAvailableMoves(ref chessPieces, TILE_COUNT_X, TILE_COUNT_Y);
+        specialMove = aiPiece.GetSpecialMoves(ref chessPieces, ref moveList, ref availableMoves);
+
+        MoveTo(aiPiece, to.x, to.y);
+
+        // AI promóció kezelése
+        if (isPromotion)
+        {
+            PromoteAIPawn(aiPiece, promotionChar);
+        }
+    }
+    private void PromoteAIPawn(ChessPiece pawn, char promotionChar)
+    {
+        ChessPieceType newType = promotionChar switch
+        {
+            'q' => ChessPieceType.Queen,
+            'r' => ChessPieceType.Rook,
+            'b' => ChessPieceType.Bishop,
+            'n' => ChessPieceType.Knight,
+            _ => ChessPieceType.Queen
+        };
+
+        int x = pawn.currentX;
+        int y = pawn.currentY;
+        int team = pawn.team;
+
+        // Régi gyalog törlése
+        Destroy(pawn.gameObject);
+        chessPieces[x, y] = null;
+
+        // Új figura létrehozása
+        ChessPiece newPiece = SpawnSinglePiece(newType, team);
+        newPiece.currentX = x;
+        newPiece.currentY = y;
+        newPiece.transform.position = GetTileCenter(x, y);
+        chessPieces[x, y] = newPiece;
+    }
+    private void ApplyAIDifficulty()
+    {
+        switch (aiDifficulty)
+        {
+            case AIDifficulty.Easy:
+                stockfish.SetSkillLevel(3);
+                break;
+
+            case AIDifficulty.Medium:
+                stockfish.SetSkillLevel(8);
+                break;
+
+            case AIDifficulty.Hard:
+                stockfish.SetSkillLevel(14);
+                break;
+
+            case AIDifficulty.Expert:
+                stockfish.SetSkillLevel(20);
+                break;
+        }
     }
 }

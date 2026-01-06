@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
 
 public class GameUI : MonoBehaviour
 {
@@ -17,11 +18,28 @@ public class GameUI : MonoBehaviour
     [SerializeField] private GameObject blackTime;
     [SerializeField] private GameObject plusTimeTitle;
     [SerializeField] private GameObject plusTime;
+    [SerializeField] private Dropdown difficultyDropdown;
+    [SerializeField] private Dropdown aiColorDropdown;
+    [SerializeField] private Chessboard chessboard;
+
     private bool gameIsPaused = false;
 
     private void Awake()
     {
         Instance = this;
+
+        aiColorDropdown.value = (int)chessboard.aiColor;
+        aiColorDropdown.onValueChanged.AddListener(SetAIColor);
+
+        if (difficultyDropdown != null && chessboard != null)
+        {
+            // Kezdeti érték beállítása
+            chessboard.aiDifficulty = AIDifficulty.Easy;
+            difficultyDropdown.value = (int)chessboard.aiDifficulty;
+
+            // Listener hozzáadása a Dropdownhoz
+            difficultyDropdown.onValueChanged.AddListener(OnDifficultyChanged);
+        }
     }
 
     // Gombok
@@ -34,31 +52,26 @@ public class GameUI : MonoBehaviour
     {
         if (Time.timeScale == 0f)
         {
-            gameIsPaused = true;
-            Time.timeScale = 1f;
             menuAnimator.SetTrigger("OptionMenu");
-            escMenu.SetActive(false);
+            chessboard.SetMenuState(MenuState.Settings);
         }
         else 
         {
             menuAnimator.SetTrigger("OptionMenu");
         }
     }
-
     public void OnBackButton()
     {
         if (gameIsPaused == true)
         {
-            menuAnimator.SetTrigger("EscMenu");
-            escMenu.SetActive(true);
-            mainMenu.SetActive(false);
+            menuAnimator.SetTrigger("InGameMenu");
+            chessboard.SetMenuState(MenuState.Pause);
         }
         else 
         {
             menuAnimator.SetTrigger("StartMenu");
         }
     }
-
     public void OnMusic()
     {
         if (musicPlayer.mute == false)
@@ -70,7 +83,6 @@ public class GameUI : MonoBehaviour
             musicPlayer.mute = false;
         }
     }
-
     public void OnClockOnOffClick()
     {
         if (whiteTime.activeSelf == true && blackTime.activeSelf == true && whiteTimeTitle.activeSelf == true && blackTimeTitle.activeSelf == true && plusTimeTitle.activeSelf == true && plusTime.activeSelf == true)
@@ -91,5 +103,18 @@ public class GameUI : MonoBehaviour
             blackTime.SetActive(true);
             whiteTime.SetActive(true);
         }
+    }
+    public void OnDifficultyChanged(int index)
+    {
+        if (chessboard != null)
+        {
+            chessboard.aiDifficulty = (AIDifficulty)index;
+            Debug.Log("AI Difficulty set to: " + index);
+        }
+    }
+    public void SetAIColor(int value)
+    {
+        chessboard.aiColor = (AIColor)value;
+        Debug.Log("AI color set to: " + chessboard.aiColor);
     }
 }

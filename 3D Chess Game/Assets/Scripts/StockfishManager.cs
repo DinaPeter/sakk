@@ -57,6 +57,19 @@ public class StockfishManager : MonoBehaviour
         }
     }
 
+    void SendCommand(string command)
+    {
+        if (input == null) return;
+
+        input.WriteLine(command);
+        input.Flush();
+    }
+
+    public void SetSkillLevel(int level)
+    {
+        SendCommand($"setoption name Skill Level value {level}");
+    }
+
     void StopStockfish()
     {
         if (stockfish != null && !stockfish.HasExited)
