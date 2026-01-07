@@ -32,7 +32,7 @@ public enum MenuState
 {
     None,
     Pause,
-    Settings
+    Save
 }
 
 public class Chessboard : MonoBehaviour
@@ -63,7 +63,7 @@ public class Chessboard : MonoBehaviour
     [SerializeField] public AIDifficulty aiDifficulty = AIDifficulty.Easy;
     [SerializeField] private Camera mainCamera;      // fehér nézet
     [SerializeField] private Camera secondaryCamera; // fekete nézet
-    [SerializeField] public GameObject settingsMenu;
+    [SerializeField] public GameObject saveMenu;
 
     [SerializeField] private GameObject[] prefabs;
     [SerializeField] private Material[] teamMaterials;
@@ -178,7 +178,7 @@ public class Chessboard : MonoBehaviour
             {
                 SetMenuState(MenuState.None);
             }
-            else if (currentMenuState == MenuState.Settings)
+            else if (currentMenuState == MenuState.Save)
             {
                 SetMenuState(MenuState.Pause);
             }
@@ -1245,7 +1245,7 @@ public class Chessboard : MonoBehaviour
         currentMenuState = newState;
 
         escMenu.SetActive(newState == MenuState.Pause);
-        settingsMenu.SetActive(newState == MenuState.Settings);
+        saveMenu.SetActive(newState == MenuState.Save);
         moves.SetActive(newState == MenuState.None);
 
         Time.timeScale = (newState == MenuState.None) ? 1f : 0f;
@@ -1258,14 +1258,6 @@ public class Chessboard : MonoBehaviour
     private void Pause()
     {
         SetMenuState(MenuState.Pause);
-    }
-    public void SaveGame()
-    {
-        string fen = BoardToFEN();
-        PlayerPrefs.SetString("SavedFEN", fen);
-        PlayerPrefs.Save();
-
-        Debug.Log("Game saved: " + fen);
     }
     public string ExportPGN()
     {
@@ -1297,17 +1289,6 @@ public class Chessboard : MonoBehaviour
         System.IO.File.WriteAllText(path, pgn);
 
         Debug.Log("PGN saved to: " + path);
-    }
-    public void LoadGameFromSave()
-    {
-        if (!PlayerPrefs.HasKey("SavedFEN"))
-        {
-            Debug.LogWarning("No saved game found!");
-            return;
-        }
-
-        string savedFEN = PlayerPrefs.GetString("SavedFEN");
-        LoadFromFEN(savedFEN); // átadjuk paraméterként a mentett FEN-t
     }
     public void LoadFromFEN(string fen)
     {
@@ -1489,6 +1470,57 @@ public class Chessboard : MonoBehaviour
         }
         Move lastMove2 = pgnMoves[pgnMoves.Count - 1];
         lastMove2.promotion = ChessPieceType.Rook;
+    }
+    public void SaveGameToSlot(int slot)
+    {
+        string fen = BoardToFEN();
+        string baseKey = $"ChessSave_{slot}";
+
+        PlayerPrefs.SetString(baseKey, fen);
+        PlayerPrefs.SetString(baseKey + "_Time", System.DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+        PlayerPrefs.SetInt(baseKey + "_Moves", moveList.Count);
+
+        PlayerPrefs.Save();
+
+        Debug.Log($"Game saved to slot {slot}: {fen}");
+    }
+    public void LoadGameFromSlot(int slot)
+    {
+        string key = $"ChessSave_{slot}";
+
+        if (!PlayerPrefs.HasKey(key))
+        {
+            Debug.LogWarning($"No save found in slot {slot}");
+            return;
+        }
+
+        string fen = PlayerPrefs.GetString(key);
+        LoadFromFEN(fen);
+
+        Debug.Log($"Game loaded from slot {slot}");
+    }
+    public void SaveSlotAndResume(int slot)
+    {
+        SaveGameToSlot(slot);
+        SetMenuState(MenuState.None);
+    }
+    public void LoadSlotAndResume(int slot)
+    {
+        LoadGameFromSlot(slot);
+        SetMenuState(MenuState.None);
+    }
+    public bool HasSaveInSlot(int slot)
+    {
+        return PlayerPrefs.HasKey($"ChessSave_{slot}");
+    }
+    public void DeleteSlot(int slot)
+    {
+        string key = $"ChessSave_{slot}";
+        if (PlayerPrefs.HasKey(key))
+        {
+            PlayerPrefs.DeleteKey(key);
+            Debug.Log($"Slot {slot} deleted");
+        }
     }
 
     // AI

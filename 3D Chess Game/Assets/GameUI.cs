@@ -22,8 +22,6 @@ public class GameUI : MonoBehaviour
     [SerializeField] private Dropdown aiColorDropdown;
     [SerializeField] private Chessboard chessboard;
 
-    private bool gameIsPaused = false;
-
     private void Awake()
     {
         Instance = this;
@@ -48,29 +46,17 @@ public class GameUI : MonoBehaviour
         menuAnimator.SetTrigger("InGameMenu");
         gameBoard.SetActive(true);
     }
+    public void OnSaveorLoadButton()
+    {
+        chessboard.SetMenuState(MenuState.Save);
+    }
     public void OnOptionButton()
     {
-        if (Time.timeScale == 0f)
-        {
-            menuAnimator.SetTrigger("OptionMenu");
-            chessboard.SetMenuState(MenuState.Settings);
-        }
-        else 
-        {
-            menuAnimator.SetTrigger("OptionMenu");
-        }
+        menuAnimator.SetTrigger("OptionMenu");
     }
     public void OnBackButton()
     {
-        if (gameIsPaused == true)
-        {
-            menuAnimator.SetTrigger("InGameMenu");
-            chessboard.SetMenuState(MenuState.Pause);
-        }
-        else 
-        {
-            menuAnimator.SetTrigger("StartMenu");
-        }
+        menuAnimator.SetTrigger("StartMenu");
     }
     public void OnMusic()
     {
