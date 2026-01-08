@@ -64,6 +64,14 @@ public class Chessboard : MonoBehaviour
     [SerializeField] private Camera mainCamera;      // fehér nézet
     [SerializeField] private Camera secondaryCamera; // fekete nézet
     [SerializeField] public GameObject saveMenu;
+    [SerializeField] private AudioSource audioSource;
+    [SerializeField] private AudioClip moveClip;
+    [SerializeField] private AudioClip captureClip;
+    [SerializeField] private AudioClip castleClip;
+    [SerializeField] private AudioClip boardSetupClip;
+    [SerializeField] private AudioClip checkClip;
+    [SerializeField] private AudioClip promotionClip;
+    [SerializeField] private AudioClip checkmateClip;
 
     [SerializeField] private GameObject[] prefabs;
     [SerializeField] private Material[] teamMaterials;
@@ -377,6 +385,7 @@ public class Chessboard : MonoBehaviour
                 }
             }
         }
+        PlayBoardSetupSound();
     }
     private void PositionSinglePiece(int x, int y, bool force = false)
     {
@@ -408,6 +417,7 @@ public class Chessboard : MonoBehaviour
     // Matt
     private void CheckMate(int team)
     {
+        PlayCheckmateSound();
         DisplayVictory(team);
     }
     private void DisplayVictory(int winningTeam)
@@ -452,6 +462,12 @@ public class Chessboard : MonoBehaviour
 
         deadWhites.Clear();
         deadBlacks.Clear();
+
+        if (timeHelper.activeSelf == true) 
+        {
+            whiteTimeValue = float.Parse(whiteTime.text) * 60f;
+            blackTimeValue = float.Parse(blackTime.text) * 60f;
+        }
 
         SpawnAllPieces();
         PositionAllPieces();
@@ -729,6 +745,9 @@ public class Chessboard : MonoBehaviour
             return false;
         }
 
+        bool isCastling = specialMove == SpecialMove.Castling;
+        bool isCapture = chessPieces[x, y] != null || (cp.type == ChessPieceType.Pawn && enPassantTarget == new Vector2Int(x, y));
+
         Vector2Int previousPosition = new Vector2Int(cp.currentX, cp.currentY);
         bool resetHalfmove = false;
 
@@ -885,6 +904,11 @@ public class Chessboard : MonoBehaviour
 
         WriteMoveToUI(cp, previousPosition, new Vector2Int(x, y));
         pgnMoves.Add(m);
+
+        int enemyTeam = cp.team == 0 ? 1 : 0;
+        bool isCheck = IsKingInCheck(enemyTeam);
+        bool isCheckmate = CheckForCheckmate();
+        PlayMoveSound(isCapture, isCastling, isCheck, isCheckmate);
 
         return true;
     }
@@ -1239,6 +1263,81 @@ public class Chessboard : MonoBehaviour
         write.text += type + ": " + fromText + " -> " + toText + "\n";
     }
 
+    // hangok
+    void PlayMoveSound(bool isCapture, bool isCastling, bool isCheck, bool isCheckmate)
+    {
+        if (!audioSource) return;
+
+        // Matt hang majd késõbb – most tiltjuk a sakk hangot mattnál
+        if (isCheck && !isCheckmate && checkClip != null)
+        {
+            audioSource.PlayOneShot(checkClip);
+            return;
+        }
+
+        if (isCastling && castleClip != null)
+        {
+            audioSource.PlayOneShot(castleClip);
+            return;
+        }
+
+        if (isCapture && captureClip != null)
+        {
+            audioSource.PlayOneShot(captureClip);
+            return;
+        }
+
+        if (moveClip != null)
+        {
+            audioSource.PlayOneShot(moveClip);
+        }
+    }
+    bool IsKingInCheck(int team)
+    {
+        ChessPiece king = null;
+        List<ChessPiece> attackers = new List<ChessPiece>();
+
+        for (int x = 0; x < TILE_COUNT_X; x++)
+        {
+            for (int y = 0; y < TILE_COUNT_Y; y++)
+            {
+                ChessPiece p = chessPieces[x, y];
+                if (p == null) continue;
+
+                if (p.type == ChessPieceType.King && p.team == team)
+                    king = p;
+                else if (p.team != team)
+                    attackers.Add(p);
+            }
+        }
+
+        if (king == null) return false;
+
+        foreach (var attacker in attackers)
+        {
+            var moves = attacker.GetAvailableMoves(ref chessPieces, TILE_COUNT_X, TILE_COUNT_Y);
+            if (ContainsValidMove(ref moves, new Vector2Int(king.currentX, king.currentY)))
+                return true;
+        }
+
+        return false;
+    }
+    void PlayPromotionSound()
+    {
+        if (!audioSource || !promotionClip) return;
+        audioSource.PlayOneShot(promotionClip);
+    }
+    void PlayCheckmateSound()
+    {
+        if (!audioSource || !checkmateClip) return;
+        audioSource.PlayOneShot(checkmateClip);
+    }
+    void PlayBoardSetupSound()
+    {
+        if (!audioSource || !boardSetupClip) return;
+        audioSource.PlayOneShot(boardSetupClip);
+    }
+
     // Menü kezelés
     public void SetMenuState(MenuState newState)
     {
@@ -1370,6 +1469,7 @@ public class Chessboard : MonoBehaviour
                 chessPieces[lastMove[1].x, lastMove[1].y] = newPiece;
                 PositionSinglePiece(lastMove[1].x, lastMove[1].y);
                 pieceMenu.SetActive(false);
+                PlayPromotionSound();
             }
             if (targetPawn.team == 1 && lastMove[1].y == 0)
             {
@@ -1379,6 +1479,7 @@ public class Chessboard : MonoBehaviour
                 chessPieces[lastMove[1].x, lastMove[1].y] = newPiece;
                 PositionSinglePiece(lastMove[1].x, lastMove[1].y);
                 pieceMenu.SetActive(false);
+                PlayPromotionSound();
             }
         }
         Move lastMove2 = pgnMoves[pgnMoves.Count - 1];
@@ -1399,6 +1500,7 @@ public class Chessboard : MonoBehaviour
                 chessPieces[lastMove[1].x, lastMove[1].y] = newPiece;
                 PositionSinglePiece(lastMove[1].x, lastMove[1].y);
                 pieceMenu.SetActive(false);
+                PlayPromotionSound();
             }
             if (targetPawn.team == 1 && lastMove[1].y == 0)
             {
@@ -1408,6 +1510,7 @@ public class Chessboard : MonoBehaviour
                 chessPieces[lastMove[1].x, lastMove[1].y] = newPiece;
                 PositionSinglePiece(lastMove[1].x, lastMove[1].y);
                 pieceMenu.SetActive(false);
+                PlayPromotionSound();
             }
         }
         Move lastMove2 = pgnMoves[pgnMoves.Count - 1];
@@ -1428,6 +1531,7 @@ public class Chessboard : MonoBehaviour
                 chessPieces[lastMove[1].x, lastMove[1].y] = newPiece;
                 PositionSinglePiece(lastMove[1].x, lastMove[1].y);
                 pieceMenu.SetActive(false);
+                PlayPromotionSound();
             }
             if (targetPawn.team == 1 && lastMove[1].y == 0)
             {
@@ -1437,6 +1541,7 @@ public class Chessboard : MonoBehaviour
                 chessPieces[lastMove[1].x, lastMove[1].y] = newPiece;
                 PositionSinglePiece(lastMove[1].x, lastMove[1].y);
                 pieceMenu.SetActive(false);
+                PlayPromotionSound();
             }
         }
         Move lastMove2 = pgnMoves[pgnMoves.Count - 1];
@@ -1457,6 +1562,7 @@ public class Chessboard : MonoBehaviour
                 chessPieces[lastMove[1].x, lastMove[1].y] = newPiece;
                 PositionSinglePiece(lastMove[1].x, lastMove[1].y);
                 pieceMenu.SetActive(false);
+                PlayPromotionSound();
             }
             if (targetPawn.team == 1 && lastMove[1].y == 0)
             {
@@ -1466,6 +1572,7 @@ public class Chessboard : MonoBehaviour
                 chessPieces[lastMove[1].x, lastMove[1].y] = newPiece;
                 PositionSinglePiece(lastMove[1].x, lastMove[1].y);
                 pieceMenu.SetActive(false);
+                PlayPromotionSound();
             }
         }
         Move lastMove2 = pgnMoves[pgnMoves.Count - 1];
@@ -1477,10 +1584,10 @@ public class Chessboard : MonoBehaviour
         string baseKey = $"ChessSave_{slot}";
 
         PlayerPrefs.SetString(baseKey, fen);
-        PlayerPrefs.SetString(baseKey + "_Time", System.DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+        PlayerPrefs.SetString(baseKey + "_Time", DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
         PlayerPrefs.SetInt(baseKey + "_Moves", moveList.Count);
 
-        PlayerPrefs.Save();
+        SaveSlotImage(slot);
 
         Debug.Log($"Game saved to slot {slot}: {fen}");
     }
@@ -1495,6 +1602,7 @@ public class Chessboard : MonoBehaviour
         }
 
         string fen = PlayerPrefs.GetString(key);
+        PlayBoardSetupSound();
         LoadFromFEN(fen);
 
         Debug.Log($"Game loaded from slot {slot}");
@@ -1515,12 +1623,44 @@ public class Chessboard : MonoBehaviour
     }
     public void DeleteSlot(int slot)
     {
-        string key = $"ChessSave_{slot}";
-        if (PlayerPrefs.HasKey(key))
-        {
-            PlayerPrefs.DeleteKey(key);
-            Debug.Log($"Slot {slot} deleted");
-        }
+        string baseKey = $"ChessSave_{slot}";
+
+        PlayerPrefs.DeleteKey(baseKey);
+        PlayerPrefs.DeleteKey(baseKey + "_Time");
+        PlayerPrefs.DeleteKey(baseKey + "_Moves");
+        PlayerPrefs.DeleteKey(baseKey + "_Image");
+
+        PlayerPrefs.Save();
+
+        Debug.Log($"Slot {slot} deleted");
+    }
+    public Texture2D CaptureBoardImage(int width = 256, int height = 256)
+    {
+        Camera cam = Camera.main;
+
+        RenderTexture rt = new RenderTexture(width, height, 24);
+        cam.targetTexture = rt;
+
+        Texture2D image = new Texture2D(width, height, TextureFormat.RGB24, false);
+        cam.Render();
+
+        RenderTexture.active = rt;
+        image.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+        image.Apply();
+
+        cam.targetTexture = null;
+        RenderTexture.active = null;
+        Destroy(rt);
+
+        return image;
+    }
+    void SaveSlotImage(int slot)
+    {
+        Texture2D image = CaptureBoardImage();
+        byte[] png = image.EncodeToPNG();
+        string base64 = Convert.ToBase64String(png);
+
+        PlayerPrefs.SetString($"ChessSave_{slot}_Image", base64);
     }
 
     // AI
@@ -1619,6 +1759,7 @@ public class Chessboard : MonoBehaviour
         newPiece.currentY = y;
         newPiece.transform.position = GetTileCenter(x, y);
         chessPieces[x, y] = newPiece;
+        PlayPromotionSound();
     }
     private void ApplyAIDifficulty()
     {
