@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
 using UnityEngine.UI;
+using System.Threading.Tasks;
 
 public enum SpecialMove
 {
@@ -72,6 +73,8 @@ public class Chessboard : MonoBehaviour
     [SerializeField] private AudioClip checkClip;
     [SerializeField] private AudioClip promotionClip;
     [SerializeField] private AudioClip checkmateClip;
+    [SerializeField] private float aiMinThinkTime = 0.6f;
+    [SerializeField] private float aiMaxThinkTime = 1.8f;
 
     [SerializeField] private GameObject[] prefabs;
     [SerializeField] private Material[] teamMaterials;
@@ -115,6 +118,7 @@ public class Chessboard : MonoBehaviour
     private List<Move> pgnMoves = new List<Move>();
     public AIColor aiColor = AIColor.Black;
     private MenuState currentMenuState = MenuState.None;
+    private bool aiThinking = false;
 
     private void Awake()
     {
@@ -1692,7 +1696,12 @@ public class Chessboard : MonoBehaviour
     }
     public async void RequestAIMove()
     {
-        if (!IsAITurn()) return; // AI fekete
+        if (!IsAITurn() || aiThinking) return; // AI fekete
+
+        aiThinking = true;
+
+        float thinkDelay = UnityEngine.Random.Range(aiMinThinkTime, aiMaxThinkTime);
+        await Task.Delay(Mathf.RoundToInt(thinkDelay * 1000f));
 
         string fen = BoardToFEN();
         Debug.Log("FEN sent to Stockfish: " + fen);
@@ -1706,23 +1715,104 @@ public class Chessboard : MonoBehaviour
             _ => 500
         };
 
-        string bestMove = await stockfish.GetBestMove(fen, thinkTime);
-        Debug.Log("Stockfish move: " + bestMove);
+        // TOP lépések lekérése Stockfish-tõl
+        List<string> topMoves = await stockfish.GetTopMoves(fen, 5);
 
-        // pl. e2e4
-        Vector2Int from = UCIToPosition(bestMove[0], bestMove[1]);
-        Vector2Int to = UCIToPosition(bestMove[2], bestMove[3]);
+        if (topMoves == null || topMoves.Count == 0)
+        {
+            aiThinking = false;
+            return;
+        }
 
-        bool isPromotion = bestMove.Length == 5;
-        char promotionChar = isPromotion ? bestMove[4] : ' ';
+        // Difficulty alapú választás
+        string chosenMove;
+
+        switch (aiDifficulty)
+        {
+            case AIDifficulty.Easy:
+                chosenMove = topMoves[
+                    UnityEngine.Random.Range(1, Mathf.Min(5, topMoves.Count))
+                ];
+                break;
+
+            case AIDifficulty.Medium:
+                chosenMove = topMoves[
+                    UnityEngine.Random.Range(0, Mathf.Min(3, topMoves.Count))
+                ];
+                break;
+
+            case AIDifficulty.Hard:
+                chosenMove = UnityEngine.Random.value < 0.9f
+                    ? topMoves[0]
+                    : topMoves[1];
+                break;
+
+            default: // Expert
+                chosenMove = topMoves[0];
+                break;
+        }
+
+        // Pozíció alapú hiba esély
+        Vector2Int from = UCIToPosition(chosenMove[0], chosenMove[1]);
+        Vector2Int to = UCIToPosition(chosenMove[2], chosenMove[3]);
 
         ChessPiece aiPiece = chessPieces[from.x, from.y];
+
+        float pieceBlindness = aiPiece.type switch
+        {
+            ChessPieceType.Pawn => 0.1f,
+            ChessPieceType.Knight => 0.4f,
+            ChessPieceType.Bishop => 0.25f,
+            ChessPieceType.Rook => 0.15f,
+            ChessPieceType.Queen => 0.05f,
+            _ => 0f
+        };
+
+        float baseBlunderChance =
+            aiDifficulty == AIDifficulty.Easy ? 0.35f :
+            aiDifficulty == AIDifficulty.Medium ? 0.15f : 0f;
+
+        float finalBlunderChance = baseBlunderChance * pieceBlindness;
+
+        if (finalBlunderChance > 0f && UnityEngine.Random.value < finalBlunderChance)
+        {
+            if (LeavesHangingPiece(aiPiece, to))
+            {
+                // „Nem látja”, hogy ütik
+                Debug.Log("AI blunder: hanging piece");
+                // marad a rossz lépés
+            }
+        }
+        
+        // rossz lépés
+        bool makeMistake =
+            aiDifficulty == AIDifficulty.Easy && UnityEngine.Random.value < 0.4f ||
+            aiDifficulty == AIDifficulty.Medium && UnityEngine.Random.value < 0.2f;
+
+        if (makeMistake)
+        {
+            var allMoves = GetAllLegalAIMoves();
+            if (allMoves.Count > 0)
+            {
+                var randomMove = allMoves[UnityEngine.Random.Range(0, allMoves.Count)];
+                MoveTo(randomMove.piece, randomMove.to.x, randomMove.to.y);
+                aiThinking = false;
+                return;
+            }
+        }
+
+        // UCI feldolgozás pl. e2e4
+        bool isPromotion = chosenMove.Length == 5;
+        char promotionChar = isPromotion ? chosenMove[4] : ' ';
+
         if (aiPiece == null)
         {
+            aiThinking = false;
             Debug.LogError("AI piece not found!");
             return;
         }
 
+        // Unity-s lépés végrehajtása
         availableMoves = aiPiece.GetAvailableMoves(ref chessPieces, TILE_COUNT_X, TILE_COUNT_Y);
         specialMove = aiPiece.GetSpecialMoves(ref chessPieces, ref moveList, ref availableMoves);
 
@@ -1733,6 +1823,8 @@ public class Chessboard : MonoBehaviour
         {
             PromoteAIPawn(aiPiece, promotionChar);
         }
+
+        aiThinking = false;
     }
     private void PromoteAIPawn(ChessPiece pawn, char promotionChar)
     {
@@ -1781,5 +1873,66 @@ public class Chessboard : MonoBehaviour
                 stockfish.SetSkillLevel(20);
                 break;
         }
+    }
+    private List<(ChessPiece piece, Vector2Int to)> GetAllLegalAIMoves()
+    {
+        List<(ChessPiece piece, Vector2Int to)> moves = new List<(ChessPiece piece, Vector2Int to)>();
+
+        for (int x = 0; x < 8; x++)
+        {
+            for (int y = 0; y < 8; y++)
+            {
+                ChessPiece p = chessPieces[x, y];
+                if (p == null || p.team != (aiColor == AIColor.White ? 0 : 1))
+                    continue;
+
+                var available = p.GetAvailableMoves(ref chessPieces, 8, 8);
+                specialMove = p.GetSpecialMoves(ref chessPieces, ref moveList, ref available);
+                PreventCheck();
+
+                foreach (var move in available)
+                    moves.Add((p, move));
+            }
+        }
+
+        return moves;
+    }
+    private bool LeavesHangingPiece(ChessPiece piece, Vector2Int to)
+    {
+        // 1. Ideiglenes lépés
+        Vector2Int from = new Vector2Int(piece.currentX, piece.currentY);
+        ChessPiece captured = chessPieces[to.x, to.y];
+
+        chessPieces[from.x, from.y] = null;
+        chessPieces[to.x, to.y] = piece;
+        piece.currentX = to.x;
+        piece.currentY = to.y;
+
+        // 2. Ellenfél összes ütése
+        int enemyTeam = piece.team == 0 ? 1 : 0;
+
+        List<Vector2Int> enemyAttacks = new List<Vector2Int>();
+        for (int x = 0; x < 8; x++)
+        {
+            for (int y = 0; y < 8; y++)
+            {
+                ChessPiece p = chessPieces[x, y];
+                if (p != null && p.team == enemyTeam)
+                {
+                    var moves = p.GetAvailableMoves(ref chessPieces, 8, 8);
+                    enemyAttacks.AddRange(moves);
+                }
+            }
+        }
+
+        bool hanging = enemyAttacks.Contains(to);
+
+        // 3. Visszaállítás
+        chessPieces[from.x, from.y] = piece;
+        chessPieces[to.x, to.y] = captured;
+        piece.currentX = from.x;
+        piece.currentY = from.y;
+
+        return hanging;
     }
 }

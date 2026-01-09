@@ -55,6 +55,8 @@ public class ChessPiece : MonoBehaviour
         {
             transform.position = desiredPosition;
         }
+
+        StartCoroutine(MoveAnimation(desiredPosition));
     }
 
     public virtual void SetScale(Vector3 scale, bool force = false)
@@ -64,5 +66,20 @@ public class ChessPiece : MonoBehaviour
         {
             transform.localScale = desiredScale;
         }
+    }
+
+    IEnumerator MoveAnimation(Vector3 target)
+    {
+        Vector3 start = transform.position;
+        float t = 0f;
+
+        while (t < 1f)
+        {
+            t += Time.deltaTime * 4f; // sebesség
+            transform.position = Vector3.Lerp(start, target, t);
+            yield return null;
+        }
+
+        transform.position = target;
     }
 }
