@@ -6115,6 +6115,8 @@ MonoBehaviour:
   checkClip: {fileID: 8300000, guid: 8e698e91664b91f478c061054c98ca05, type: 3}
   promotionClip: {fileID: 8300000, guid: 584bd4efc1b13e649be687bb1ef2bfa7, type: 3}
   checkmateClip: {fileID: 8300000, guid: c0eb5cd81708f964c9b9923850749e7f, type: 3}
+  aiMinThinkTime: 0.6
+  aiMaxThinkTime: 1.8
   prefabs:
   - {fileID: 2343044454859046245, guid: 94bfd3d988e933f47befc1866f02b279, type: 3}
   - {fileID: 863089797620441809, guid: 622bfc9608545e34aa2fd843a2c13954, type: 3}

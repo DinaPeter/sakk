@@ -75,6 +75,10 @@ public class Chessboard : MonoBehaviour
     [SerializeField] private AudioClip checkmateClip;
     [SerializeField] private float aiMinThinkTime = 0.6f;
     [SerializeField] private float aiMaxThinkTime = 1.8f;
+    [Header("AI Blunder Settings")]
+    [SerializeField] private float pieceBlindnessEasy = 0.35f;
+    [SerializeField] private float pieceBlindnessMedium = 0.15f;
+    [SerializeField] private float pieceBlindnessHard = 0.05f;
 
     [SerializeField] private GameObject[] prefabs;
     [SerializeField] private Material[] teamMaterials;
@@ -215,6 +219,11 @@ public class Chessboard : MonoBehaviour
                 tiles[hitPosition.x, hitPosition.y].layer = LayerMask.NameToLayer("Hover");
             }
 
+            if (aiThinking)
+            {
+                return;
+            }
+
             // Egér gomblenyomás
             if (Input.GetMouseButtonDown(0))
             {
@@ -248,8 +257,6 @@ public class Chessboard : MonoBehaviour
                     currentlyDragging.SetPosition(GetTileCenter(previousPosition.x, previousPosition.y));
                     currentlyDragging = null;
                 }
-
-                RequestAIMove();
 
                 RemoveHighlightTiles();
                 currentlyDragging = null;
@@ -874,7 +881,11 @@ public class Chessboard : MonoBehaviour
             halfmoveClock++;
 
         // Játékosváltás
-        isWhiteTurn = !isWhiteTurn;
+        if (!aiThinking)
+        {
+            isWhiteTurn = !isWhiteTurn;
+        }
+
         if (isWhiteTurn)
         {
             blackTimeValue += plusTimeValue;
@@ -913,6 +924,11 @@ public class Chessboard : MonoBehaviour
         bool isCheck = IsKingInCheck(enemyTeam);
         bool isCheckmate = CheckForCheckmate();
         PlayMoveSound(isCapture, isCastling, isCheck, isCheckmate);
+
+        if (IsAITurn())
+        {
+            RequestAIMove();
+        }
 
         return true;
     }
@@ -1696,27 +1712,58 @@ public class Chessboard : MonoBehaviour
     }
     public async void RequestAIMove()
     {
-        if (!IsAITurn() || aiThinking) return; // AI fekete
+        // Alap védelem
+        if (!IsAITurn() || aiThinking)
+            return;
 
         aiThinking = true;
 
+        // Emberi gondolkodási idõ
         float thinkDelay = UnityEngine.Random.Range(aiMinThinkTime, aiMaxThinkTime);
         await Task.Delay(Mathf.RoundToInt(thinkDelay * 1000f));
 
+        // Aktuális állás FEN-ben
         string fen = BoardToFEN();
         Debug.Log("FEN sent to Stockfish: " + fen);
 
-        int thinkTime = aiDifficulty switch
-        {
-            AIDifficulty.Easy => 200,
-            AIDifficulty.Medium => 500,
-            AIDifficulty.Hard => 1000,
-            AIDifficulty.Expert => 2000,
-            _ => 500
-        };
+        // Stockfish-tõl TOP lépések
+        List<StockfishMove> topMoves = await stockfish.GetTopMoves(fen, 5);
 
-        // TOP lépések lekérése Stockfish-tõl
-        List<string> topMoves = await stockfish.GetTopMoves(fen, 5);
+        StockfishMove chosen = null;
+        int bestScore = int.MinValue;
+
+        foreach (var move in topMoves)
+        {
+            int noisyEval = AddEvalNoise(move.eval);
+
+            if (noisyEval > bestScore)
+            {
+                bestScore = noisyEval;
+                chosen = move;
+            }
+        }
+
+        float blunderChance = GetFinalBlunderChance();
+
+        if (UnityEngine.Random.value < blunderChance)
+        {
+            // rosszabb lépés, de nem öngyilkosság
+            int index = UnityEngine.Random.Range(
+                Mathf.Min(2, topMoves.Count - 1),
+                topMoves.Count
+            );
+
+            chosen = topMoves[index];
+        }
+
+        // piece blindness felülírhatja
+        if (UnityEngine.Random.value < GetPieceBlindness())
+        {
+            chosen = topMoves[UnityEngine.Random.Range(
+                Mathf.Min(2, topMoves.Count - 1),
+                topMoves.Count
+            )];
+        }
 
         if (topMoves == null || topMoves.Count == 0)
         {
@@ -1724,133 +1771,96 @@ public class Chessboard : MonoBehaviour
             return;
         }
 
-        // Difficulty alapú választás
-        string chosenMove;
+        // Difficulty alapú lépésválasztás
+        string chosenMove = chosen.move;
 
         switch (aiDifficulty)
         {
             case AIDifficulty.Easy:
                 chosenMove = topMoves[
                     UnityEngine.Random.Range(1, Mathf.Min(5, topMoves.Count))
-                ];
+                ].move;
                 break;
 
             case AIDifficulty.Medium:
                 chosenMove = topMoves[
                     UnityEngine.Random.Range(0, Mathf.Min(3, topMoves.Count))
-                ];
+                ].move;
                 break;
 
             case AIDifficulty.Hard:
                 chosenMove = UnityEngine.Random.value < 0.9f
-                    ? topMoves[0]
-                    : topMoves[1];
+                    ? topMoves[0].move
+                    : topMoves[Mathf.Min(1, topMoves.Count - 1)].move;
                 break;
 
             default: // Expert
-                chosenMove = topMoves[0];
+                chosenMove = topMoves[0].move;
                 break;
         }
 
-        // Pozíció alapú hiba esély
+        // UCI -> tábla koordináták
         Vector2Int from = UCIToPosition(chosenMove[0], chosenMove[1]);
         Vector2Int to = UCIToPosition(chosenMove[2], chosenMove[3]);
 
-        ChessPiece aiPiece = chessPieces[from.x, from.y];
-
-        float pieceBlindness = aiPiece.type switch
-        {
-            ChessPieceType.Pawn => 0.1f,
-            ChessPieceType.Knight => 0.4f,
-            ChessPieceType.Bishop => 0.25f,
-            ChessPieceType.Rook => 0.15f,
-            ChessPieceType.Queen => 0.05f,
-            _ => 0f
-        };
-
-        float baseBlunderChance =
-            aiDifficulty == AIDifficulty.Easy ? 0.35f :
-            aiDifficulty == AIDifficulty.Medium ? 0.15f : 0f;
-
-        float finalBlunderChance = baseBlunderChance * pieceBlindness;
-
-        if (finalBlunderChance > 0f && UnityEngine.Random.value < finalBlunderChance)
-        {
-            if (LeavesHangingPiece(aiPiece, to))
-            {
-                // „Nem látja”, hogy ütik
-                Debug.Log("AI blunder: hanging piece");
-                // marad a rossz lépés
-            }
-        }
-        
-        // rossz lépés
-        bool makeMistake =
-            aiDifficulty == AIDifficulty.Easy && UnityEngine.Random.value < 0.4f ||
-            aiDifficulty == AIDifficulty.Medium && UnityEngine.Random.value < 0.2f;
-
-        if (makeMistake)
-        {
-            var allMoves = GetAllLegalAIMoves();
-            if (allMoves.Count > 0)
-            {
-                var randomMove = allMoves[UnityEngine.Random.Range(0, allMoves.Count)];
-                MoveTo(randomMove.piece, randomMove.to.x, randomMove.to.y);
-                aiThinking = false;
-                return;
-            }
-        }
-
-        // UCI feldolgozás pl. e2e4
         bool isPromotion = chosenMove.Length == 5;
-        char promotionChar = isPromotion ? chosenMove[4] : ' ';
 
+        ChessPiece aiPiece = chessPieces[from.x, from.y];
         if (aiPiece == null)
         {
             aiThinking = false;
-            Debug.LogError("AI piece not found!");
             return;
         }
 
-        // Unity-s lépés végrehajtása
+        // Unity oldali lépés elõkészítés
         availableMoves = aiPiece.GetAvailableMoves(ref chessPieces, TILE_COUNT_X, TILE_COUNT_Y);
         specialMove = aiPiece.GetSpecialMoves(ref chessPieces, ref moveList, ref availableMoves);
 
-        MoveTo(aiPiece, to.x, to.y);
+        // Lépés végrehajtása
+        bool moved = MoveTo(aiPiece, to.x, to.y);
 
-        // AI promóció kezelése
-        if (isPromotion)
+        Debug.Log(moved);
+
+        if (!moved)
         {
-            PromoteAIPawn(aiPiece, promotionChar);
+            Debug.LogWarning($"AI move rejected: {chosenMove}");
+            aiThinking = false;
+            return;
         }
 
-        aiThinking = false;
-    }
-    private void PromoteAIPawn(ChessPiece pawn, char promotionChar)
-    {
-        ChessPieceType newType = promotionChar switch
+        // Promóció – helyzetfüggõ döntéssel
+        if (isPromotion)
         {
-            'q' => ChessPieceType.Queen,
-            'r' => ChessPieceType.Rook,
-            'b' => ChessPieceType.Bishop,
-            'n' => ChessPieceType.Knight,
-            _ => ChessPieceType.Queen
-        };
+            ChessPieceType promotion = DecideAIPromotion(aiPiece);
+            PromoteAIPawn(aiPiece, promotion);
+        }
+
+        // Kész
+        aiThinking = false;
+        isWhiteTurn = !isWhiteTurn;
+        RemoveHighlightTiles();
+    }
+    private void PromoteAIPawn(ChessPiece pawn, ChessPieceType type)
+    {
+        if (pawn == null)
+            return;
 
         int x = pawn.currentX;
         int y = pawn.currentY;
         int team = pawn.team;
 
-        // Régi gyalog törlése
-        Destroy(pawn.gameObject);
+        // Régi gyalog eltávolítása
         chessPieces[x, y] = null;
+        Destroy(pawn.gameObject);
 
-        // Új figura létrehozása
-        ChessPiece newPiece = SpawnSinglePiece(newType, team);
-        newPiece.currentX = x;
-        newPiece.currentY = y;
-        newPiece.transform.position = GetTileCenter(x, y);
+        // Új figura létrehozása a kiválasztott típusból
+        ChessPiece newPiece = SpawnPiece(type, team, x, y);
+
+        // Biztonság kedvéért frissítjük a board referenciát
         chessPieces[x, y] = newPiece;
+
+        // (opcionális) kis vizuális extra
+        newPiece.transform.localScale *= 1.1f;
         PlayPromotionSound();
     }
     private void ApplyAIDifficulty()
@@ -1888,7 +1898,6 @@ public class Chessboard : MonoBehaviour
 
                 var available = p.GetAvailableMoves(ref chessPieces, 8, 8);
                 specialMove = p.GetSpecialMoves(ref chessPieces, ref moveList, ref available);
-                PreventCheck();
 
                 foreach (var move in available)
                     moves.Add((p, move));
@@ -1935,4 +1944,225 @@ public class Chessboard : MonoBehaviour
 
         return hanging;
     }
+    private ChessPieceType DecideAIPromotion(ChessPiece pawn)
+    {
+        // Alap preferencia
+        List<ChessPieceType> options = new List<ChessPieceType>
+    {
+        ChessPieceType.Queen,
+        ChessPieceType.Rook,
+        ChessPieceType.Bishop,
+        ChessPieceType.Knight
+    };
+
+        // Ha a vezér azonnal üthetõ -> ne legyen elsõ
+        options.Sort((a, b) =>
+            GetPromotionSafetyScore(pawn, b)
+            .CompareTo(GetPromotionSafetyScore(pawn, a))
+        );
+
+        // Difficulty-alapú „hibázás”
+        if (aiDifficulty == AIDifficulty.Easy && UnityEngine.Random.value < 0.3f)
+            return options[UnityEngine.Random.Range(1, options.Count)];
+
+        if (aiDifficulty == AIDifficulty.Medium && UnityEngine.Random.value < 0.15f)
+            return options[UnityEngine.Random.Range(0, 2)];
+
+        // Hard / Expert -> legjobb
+        return options[0];
+    }
+    private int GetPromotionSafetyScore(ChessPiece pawn, ChessPieceType type)
+    {
+        Vector2Int pos = new Vector2Int(pawn.currentX, pawn.currentY);
+
+        // ideiglenes bábu
+        ChessPiece fake = new ChessPiece
+        {
+            type = type,
+            team = pawn.team,
+            currentX = pos.x,
+            currentY = pos.y
+        };
+
+        int enemyTeam = pawn.team == 0 ? 1 : 0;
+
+        for (int x = 0; x < 8; x++)
+        {
+            for (int y = 0; y < 8; y++)
+            {
+                ChessPiece enemy = chessPieces[x, y];
+                if (enemy != null && enemy.team == enemyTeam)
+                {
+                    var moves = enemy.GetAvailableMoves(ref chessPieces, 8, 8);
+                    if (moves.Contains(pos))
+                        return -100; // azonnal üthetõ
+                }
+            }
+        }
+
+        // preferencia érték
+        return type switch
+        {
+            ChessPieceType.Queen => 100,
+            ChessPieceType.Rook => 60,
+            ChessPieceType.Bishop => 40,
+            ChessPieceType.Knight => 50,
+            _ => 0
+        };
+    }
+    private ChessPiece SpawnPiece(ChessPieceType type, int team, int x, int y)
+    {
+        // Prefab index kiszámítása
+        // prefab sorrend:
+        // 0–5: White (Pawn, Rook, Knight, Bishop, Queen, King)
+        // 6–11: Black (Pawn, Rook, Knight, Bishop, Queen, King)
+
+        int prefabIndex = (int)type + (team == 0 ? 0 : 6);
+
+        // Prefab létrehozása
+        GameObject pieceObj = Instantiate(
+            prefabs[prefabIndex]
+        );
+
+        ChessPiece piece = pieceObj.GetComponent<ChessPiece>();
+
+        // Adatok beállítása
+        piece.type = type;
+        piece.team = team;
+        piece.currentX = x;
+        piece.currentY = y;
+
+        // Tábla pozíció beállítása
+        PositionSinglePiece(x, y, piece);
+
+        // Board referencia frissítése
+        chessPieces[x, y] = piece;
+
+        return piece;
+    }
+    float GetPieceBlindness()
+    {
+        return aiDifficulty switch
+        {
+            AIDifficulty.Easy => pieceBlindnessEasy,
+            AIDifficulty.Medium => pieceBlindnessMedium,
+            AIDifficulty.Hard => pieceBlindnessHard,
+            _ => 0f
+        };
+    }
+    int AddEvalNoise(int eval)
+    {
+        int noise = aiDifficulty switch
+        {
+            AIDifficulty.Easy => UnityEngine.Random.Range(-80, 80),
+            AIDifficulty.Medium => UnityEngine.Random.Range(-30, 30),
+            AIDifficulty.Hard => UnityEngine.Random.Range(-10, 10),
+            _ => 0
+        };
+
+        return eval + noise;
+    }
+    int GetMaterialBalance(int team)
+    {
+        int score = 0;
+
+        foreach (var piece in chessPieces)
+        {
+            if (piece == null) continue;
+
+            int value = piece.type switch
+            {
+                ChessPieceType.Pawn => 1,
+                ChessPieceType.Knight => 3,
+                ChessPieceType.Bishop => 3,
+                ChessPieceType.Rook => 5,
+                ChessPieceType.Queen => 9,
+                _ => 0
+            };
+
+            score += (piece.team == team) ? value : -value;
+        }
+
+        return score;
+    }
+    float GetMaterialBlunderFactor(int aiTeam)
+    {
+        int balance = GetMaterialBalance(aiTeam);
+
+        if (balance < -5) return 1.5f;   // rossz állás -> tilt
+        if (balance > 5) return 0.7f;   // nyerõ állás -> magabiztos
+
+        return 1f;
+    }
+    bool IsKingUnderThreat(int team)
+    {
+        ChessPiece king = GetKing(team);
+        if (king == null) return false;
+
+        Vector2Int kingPos = new Vector2Int(king.currentX, king.currentY);
+
+        foreach (var piece in chessPieces)
+        {
+            if (piece == null || piece.team == team) continue;
+
+            List<Vector2Int> moves =
+                piece.GetAvailableMoves(ref chessPieces, 8, 8);
+
+            if (moves.Contains(kingPos))
+                return true;
+        }
+
+        return false;
+    }
+    float GetKingSafetyFactor(int aiTeam)
+    {
+        return IsKingUnderThreat(aiTeam) ? 1.4f : 1f;
+    }
+    int CountPieces(int team)
+    {
+        int count = 0;
+        foreach (var p in chessPieces)
+            if (p != null && p.team == team)
+                count++;
+        return count;
+    }
+    float GetEndgameFactor()
+    {
+        int total = CountPieces(0) + CountPieces(1);
+        return total < 8 ? 1.3f : 1f;
+    }
+    float GetBaseBlunderChance()
+    {
+        return aiDifficulty switch
+        {
+            AIDifficulty.Easy => 0.35f,
+            AIDifficulty.Medium => 0.18f,
+            AIDifficulty.Hard => 0.07f,
+            _ => 0f
+        };
+    }
+    float GetFinalBlunderChance()
+    {
+        int aiTeam = GetAITeam();
+
+        return GetBaseBlunderChance()
+            * GetMaterialBlunderFactor(aiTeam)
+            * GetKingSafetyFactor(aiTeam)
+            * GetEndgameFactor();
+    }
+    ChessPiece GetKing(int team)
+    {
+        foreach (var piece in chessPieces)
+        {
+            if (piece == null) continue;
+            if (piece.team == team && piece.type == ChessPieceType.King)
+                return piece;
+        }
+        return null;
+    }
+    int GetAITeam()
+    {
+        return isWhiteTurn ? 0 : 1;
+    }
+
 }
