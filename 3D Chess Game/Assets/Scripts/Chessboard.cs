@@ -123,6 +123,8 @@ public class Chessboard : MonoBehaviour
     public AIColor aiColor = AIColor.Black;
     private MenuState currentMenuState = MenuState.None;
     private bool aiThinking = false;
+    private Stack<MoveState> undoStack = new Stack<MoveState>();
+    private Stack<MoveState> redoStack = new Stack<MoveState>();
 
     private void Awake()
     {
@@ -756,6 +758,20 @@ public class Chessboard : MonoBehaviour
             return false;
         }
 
+        int startX = cp.currentX;
+        int startY = cp.currentY;
+
+        // leütött bábu lekérése KÖZVETLENÜL a tábláról
+        ChessPiece captured = chessPieces[x, y];
+
+        // UNDO MENTÉS - EZ A HELYES HELY
+        SaveMoveState(
+            cp,
+            startX, startY,
+            x, y,
+            captured
+        );
+
         bool isCastling = specialMove == SpecialMove.Castling;
         bool isCapture = chessPieces[x, y] != null || (cp.type == ChessPieceType.Pawn && enPassantTarget == new Vector2Int(x, y));
 
@@ -1282,6 +1298,81 @@ public class Chessboard : MonoBehaviour
 
         write.text += type + ": " + fromText + " -> " + toText + "\n";
     }
+    void SaveMoveState(ChessPiece piece, int fromX, int fromY, int toX, int toY, ChessPiece captured)
+    {
+        MoveState state = new MoveState
+        {
+            fromX = fromX,
+            fromY = fromY,
+            toX = toX,
+            toY = toY,
+            movedPiece = piece,
+            capturedPiece = captured,
+            wasWhiteTurn = isWhiteTurn,
+            wasPromotion = piece.type == ChessPieceType.Pawn &&
+                           (toY == 0 || toY == 7),
+            originalType = piece.type
+        };
+
+        undoStack.Push(state);
+        redoStack.Clear(); // új lépés -> redo törlés
+    }
+    void RestoreState(MoveState state)
+    {
+        RemoveHighlightTiles();
+        currentlyDragging = null;
+        availableMoves.Clear();
+        specialMove = SpecialMove.None;
+        enPassantTarget = -Vector2Int.one;
+        aiThinking = false;
+
+        // bábu vissza
+        chessPieces[state.fromX, state.fromY] = state.movedPiece;
+        chessPieces[state.toX, state.toY] = state.capturedPiece;
+
+        state.movedPiece.currentX = state.fromX;
+        state.movedPiece.currentY = state.fromY;
+        state.movedPiece.SetPosition(
+            GetTileCenter(state.fromX, state.fromY)
+        );
+
+        if (state.capturedPiece != null)
+        {
+            state.capturedPiece.gameObject.SetActive(true);
+            state.capturedPiece.currentX = state.toX;
+            state.capturedPiece.currentY = state.toY;
+            state.movedPiece.SetPosition(
+                GetTileCenter(state.fromX, state.fromY)
+            );
+        }
+
+        // promóció vissza
+        if (state.wasPromotion)
+            state.movedPiece.type = state.originalType;
+
+        isWhiteTurn = state.wasWhiteTurn;
+    }
+    void ApplyState(MoveState state)
+    {
+        RemoveHighlightTiles();
+        currentlyDragging = null;
+        availableMoves.Clear();
+        specialMove = SpecialMove.None;
+        aiThinking = false;
+
+        // tábla frissítés
+        chessPieces[state.fromX, state.fromY] = null;
+        chessPieces[state.toX, state.toY] = state.movedPiece;
+
+        state.movedPiece.currentX = state.toX;
+        state.movedPiece.currentY = state.toY;
+        state.movedPiece.SetPosition(GetTileCenter(state.toX, state.toY));
+
+        if (state.capturedPiece != null)
+            state.capturedPiece.gameObject.SetActive(false);
+
+        isWhiteTurn = !state.wasWhiteTurn;
+    }
 
     // hangok
     void PlayMoveSound(bool isCapture, bool isCastling, bool isCheck, bool isCheckmate)
@@ -1681,6 +1772,28 @@ public class Chessboard : MonoBehaviour
         string base64 = Convert.ToBase64String(png);
 
         PlayerPrefs.SetString($"ChessSave_{slot}_Image", base64);
+    }
+    public void UndoMove()
+    {
+        if (undoStack.Count == 0 || aiThinking)
+            return;
+
+        MoveState state = undoStack.Pop();
+        redoStack.Push(state);
+
+        RestoreState(state);
+    }
+    public void RedoMove()
+    {
+        if (redoStack.Count == 0 || aiThinking)
+            return;
+
+        MoveState state = redoStack.Pop();
+        undoStack.Push(state);
+
+        RemoveHighlightTiles();
+        aiThinking = false;
+        ApplyState(state);
     }
 
     // AI
@@ -2164,5 +2277,4 @@ public class Chessboard : MonoBehaviour
     {
         return isWhiteTurn ? 0 : 1;
     }
-
 }
